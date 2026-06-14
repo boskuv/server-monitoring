@@ -1,0 +1,11 @@
+services:
+  monitor:
+    build: .
+    env_file: .env
+    network_mode: host
+    pid: host
+    volumes:
+      - ./data:/data
+      - /:/host:ro,rslave
+    profiles:
+      - monitor
