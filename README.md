@@ -46,6 +46,61 @@ docker compose --profile monitor run --rm monitor
 | `LOG_CHECKS_FILE` | no | `/config/log_checks.yaml` | Path to log check rules |
 | `LOG_STATE_FILE` | no | `/data/log_state.json` | Per-container last-check state |
 | `LOG_DEFAULT_LOOKBACK_MINUTES` | no | `15` | First-run log lookback window |
+| `REPORT_MODE` | no | `always` | `always` or `scheduled_or_alert` |
+| `REPORT_DAILY_HOUR` | no | `9` | UTC hour for daily full report |
+| `REPORT_DAILY_MINUTE` | no | `0` | UTC minute for daily full report |
+| `REPORT_STATE_FILE` | no | `/data/report_state.json` | Daily/alert delivery state |
+| `CPU_ALERT_PERCENT` | no | `0` | CPU alert threshold (`0` = off) |
+| `RAM_ALERT_PERCENT` | no | `0` | RAM alert threshold |
+| `DISK_ALERT_PERCENT` | no | `0` | Disk alert threshold (any mount) |
+| `LOAD_ALERT_PER_CORE` | no | `0` | Load average per core threshold |
+| `NET_RX_ALERT_MBPS` | no | `0` | Network RX Mbps threshold |
+| `NET_TX_ALERT_MBPS` | no | `0` | Network TX Mbps threshold |
+| `LOG_ERRORS_TRIGGER_ALERT` | no | `true` | Docker log errors trigger alert |
+| `ALERT_COOLDOWN_MINUTES` | no | `120` | Min interval between alert messages |
+
+## Conditional report delivery
+
+By default every run sends a full report (`REPORT_MODE=always`). For frequent cron checks with less noise, use `scheduled_or_alert`:
+
+```env
+REPORT_MODE=scheduled_or_alert
+REPORT_DAILY_HOUR=9
+REPORT_DAILY_MINUTE=0
+
+CPU_ALERT_PERCENT=90
+RAM_ALERT_PERCENT=85
+DISK_ALERT_PERCENT=90
+LOAD_ALERT_PER_CORE=2.0
+NET_RX_ALERT_MBPS=50
+NET_TX_ALERT_MBPS=50
+LOG_ERRORS_TRIGGER_ALERT=true
+ALERT_COOLDOWN_MINUTES=120
+```
+
+Cron can run every 30 minutes — metrics and logs are **always collected**, but Telegram messages are sent only when:
+
+1. **Daily report** — first run at or after `REPORT_DAILY_HOUR:REPORT_DAILY_MINUTE` UTC each day → **full report**
+2. **Threshold alert** — CPU/RAM/disk/load/network/logs exceed configured limits → **short alert message**
+3. Otherwise — silent exit 0 (`Report skipped`)
+
+Threshold alerts respect `ALERT_COOLDOWN_MINUTES` to avoid spam. Daily reports are not affected by cooldown.
+
+Example cron:
+
+```cron
+*/30 * * * * cd /path/to/monitoring-service && docker compose --profile monitor run --rm monitor >> /var/log/infra-monitor.log 2>&1
+```
+
+Short alert example:
+
+```
+⚠️ ALERT — myhost (2026-06-14 14:30 UTC)
+
+• CPU 95.2% (threshold 90%)
+• RAM 87.3% (threshold 85%)
+• Logs backend: 5 errors
+```
 
 ## Docker log monitoring
 

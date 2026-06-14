@@ -1,5 +1,6 @@
 import sys
 
+from monitor.alerting import decide_report, format_alert_report, record_sent
 from monitor.collectors import collect_all
 from monitor.config import Settings
 from monitor.log_collector import collect_log_errors
@@ -26,11 +27,28 @@ def main() -> int:
         default_lookback_minutes=settings.log_default_lookback_minutes,
     )
 
-    report = format_report(
-        metrics,
-        disk_warn_percent=settings.disk_warn_percent,
+    decision = decide_report(
+        metrics=metrics,
         log_summary=log_summary,
+        settings=settings,
+        report_state_path=settings.report_state_file,
     )
+
+    if not decision.should_send:
+        print(
+            "Report skipped (no alert, no scheduled daily). "
+            f"Mode: {settings.report_mode}"
+        )
+        return 0
+
+    if decision.report_type == "alert":
+        report = format_alert_report(metrics, decision.reasons)
+    else:
+        report = format_report(
+            metrics,
+            disk_warn_percent=settings.disk_warn_percent,
+            log_summary=log_summary,
+        )
 
     try:
         send_message(
@@ -42,7 +60,8 @@ def main() -> int:
         print(f"Failed to send Telegram message: {exc}", file=sys.stderr)
         return 1
 
-    print("Report sent successfully.")
+    record_sent(decision, settings.report_state_file)
+    print(f"Report sent ({decision.report_type}).")
     return 0
 
 

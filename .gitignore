@@ -5,3 +5,4 @@ __pycache__/
 venv/
 data/net_state.json
 data/log_state.json
+data/report_state.json
