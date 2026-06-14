@@ -7,5 +7,7 @@ services:
     volumes:
       - ./data:/data
       - /:/host:ro,rslave
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./log_checks.yaml:/config/log_checks.yaml:ro
     profiles:
       - monitor

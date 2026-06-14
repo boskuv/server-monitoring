@@ -2,6 +2,7 @@ import sys
 
 from monitor.collectors import collect_all
 from monitor.config import Settings
+from monitor.log_collector import collect_log_errors
 from monitor.reporter import format_report
 from monitor.telegram import send_message
 
@@ -18,7 +19,18 @@ def main() -> int:
         hostname_override=settings.hostname_override,
     )
 
-    report = format_report(metrics, disk_warn_percent=settings.disk_warn_percent)
+    log_summary = collect_log_errors(
+        enabled=settings.log_checks_enabled,
+        config_path=settings.log_checks_file,
+        state_path=settings.log_state_file,
+        default_lookback_minutes=settings.log_default_lookback_minutes,
+    )
+
+    report = format_report(
+        metrics,
+        disk_warn_percent=settings.disk_warn_percent,
+        log_summary=log_summary,
+    )
 
     try:
         send_message(

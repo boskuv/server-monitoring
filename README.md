@@ -1,6 +1,6 @@
 # Infrastructure Monitoring Service
 
-A lightweight, cron-friendly service that collects host CPU, RAM, disk, and network metrics and sends a full status report to Telegram.
+A lightweight, cron-friendly service that collects host CPU, RAM, disk, and network metrics and sends a full status report to Telegram. Optionally scans Docker container logs for errors.
 
 ## Features
 
@@ -9,6 +9,7 @@ A lightweight, cron-friendly service that collects host CPU, RAM, disk, and netw
 - **Disk**: per-mount usage with warning markers above threshold
 - **Network**: per-interface throughput since last run (Mbps)
 - **System**: hostname and uptime
+- **Docker Logs** (optional): scan configured containers for errors since last run, with regex extraction and grouping
 
 Runs as a one-shot container — no long-running process. Triggered by host cron via `docker compose run --rm`.
 
@@ -41,6 +42,64 @@ docker compose --profile monitor run --rm monitor
 | `DISK_WARN_PERCENT` | no | `80` | Disk usage % to mark with warning |
 | `STATE_FILE` | no | `/data/net_state.json` | Path for network delta state |
 | `HOSTNAME_OVERRIDE` | no | auto | Override hostname in report |
+| `LOG_CHECKS_ENABLED` | no | `false` | Enable Docker log error scanning |
+| `LOG_CHECKS_FILE` | no | `/config/log_checks.yaml` | Path to log check rules |
+| `LOG_STATE_FILE` | no | `/data/log_state.json` | Per-container last-check state |
+| `LOG_DEFAULT_LOOKBACK_MINUTES` | no | `15` | First-run log lookback window |
+
+## Docker log monitoring
+
+Log scanning is **disabled by default**. To enable:
+
+1. Copy and customize the example config:
+
+```bash
+cp log_checks.yaml.example log_checks.yaml
+```
+
+2. Set `enabled: true` in `log_checks.yaml` and define your containers.
+
+3. Enable in `.env`:
+
+```env
+LOG_CHECKS_ENABLED=true
+```
+
+### Example `log_checks.yaml`
+
+```yaml
+enabled: true
+
+containers:
+  - name: backend
+    match: "backend"
+    error_pattern: "(?i)(error|exception|traceback|critical)"
+    extract:
+      - label: order_id
+        pattern: "order_id[=: ]+(\\d+)"
+    max_samples: 2
+
+  - name: tg-bot
+    match: ".*bot.*"
+    error_pattern: "(?i)error"
+```
+
+| Field | Description |
+|-------|-------------|
+| `name` | Display label in the Telegram report |
+| `match` | Regex matched against Docker container names |
+| `error_pattern` | Regex — log line must match to count as an error |
+| `extract` | Optional regex captures for grouping (e.g. `order_id=101 (3x)`) |
+| `max_samples` | Max sample error lines shown per container (default 2) |
+
+Each cron run scans only logs **since the last check**. The scan period equals your cron interval (e.g. 15 minutes).
+
+The report always includes a **Docker Logs** section:
+- `disabled` when `LOG_CHECKS_ENABLED=false`
+- `no errors` per container when clean
+- grouped error counts and sample lines when errors are found
+
+Requires read-only access to `/var/run/docker.sock` (already configured in `docker-compose.yml`).
 
 ## Integration with existing Compose
 
@@ -56,6 +115,8 @@ services:
     volumes:
       - ./monitoring-service/data:/data
       - /:/host:ro,rslave
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./monitoring-service/log_checks.yaml:/config/log_checks.yaml:ro
     profiles:
       - monitor
 ```
@@ -89,6 +150,9 @@ export PYTHONPATH=src
 export TELEGRAM_BOT_TOKEN=...
 export TELEGRAM_CHAT_ID=...
 export STATE_FILE=./data/net_state.json
+export LOG_CHECKS_ENABLED=true
+export LOG_CHECKS_FILE=./log_checks.yaml
+export LOG_STATE_FILE=./data/log_state.json
 python -m monitor
 ```
 
@@ -98,3 +162,5 @@ python -m monitor
 2. Compare values with `free -h`, `df -h`, and `uptime` on the host.
 3. Run again after a few minutes — network throughput rates should appear.
 4. Use an invalid token — the process should exit with code 1.
+5. Enable log checks, trigger a test error in a container — next run shows grouped error count.
+6. Second run with no new errors — container shows `no errors`.

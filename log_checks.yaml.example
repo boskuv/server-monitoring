@@ -1,0 +1,23 @@
+# Copy to log_checks.yaml and customize for your stack.
+# Enable in .env: LOG_CHECKS_ENABLED=true
+
+enabled: true
+
+containers:
+  - name: backend
+    match: "backend"
+    error_pattern: "(?i)(error|exception|traceback|critical)"
+    extract:
+      - label: order_id
+        pattern: "order_id[=: ]+(\\d+)"
+      - label: user_id
+        pattern: "user_id[=: ]+(\\w+)"
+    max_samples: 2
+
+  - name: tg-bot
+    match: ".*bot.*"
+    error_pattern: "(?i)error"
+
+  - name: postgres
+    match: "postgres"
+    error_pattern: "(?i)(error|fatal|panic)"
