@@ -21,3 +21,16 @@ containers:
   - name: postgres
     match: "postgres"
     error_pattern: "(?i)(error|fatal|panic)"
+
+# Host system logs (SSH auth, etc.) — path is inside the monitor container.
+# With docker-compose, /host is the server root (see README).
+host_logs:
+  - name: auth
+    path: /host/var/log/auth.log
+    error_pattern: "(?i)(failed password|invalid user|authentication failure|accepted password|accepted publickey)"
+    extract:
+      - label: ip
+        pattern: "from ([\\d.]+) port"
+      - label: user
+        pattern: "for (?:invalid user )?(\\S+)"
+    max_samples: 3

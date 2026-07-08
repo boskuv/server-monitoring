@@ -20,6 +20,49 @@ def _esc(value: str | float | int) -> str:
     return html.escape(str(value))
 
 
+def _format_log_entries(
+    entries: list,
+    clean_label: str,
+) -> list[str]:
+    lines: list[str] = []
+    has_errors = any(entry.status == "errors" for entry in entries)
+    if not has_errors and all(entry.status == "ok" for entry in entries):
+        lines.append(f"  {clean_label} ({_esc(len(entries))} checked)")
+        return lines
+
+    for entry in entries:
+        if entry.status == "ok":
+            lines.append(f"  {_esc(entry.name)}: no events")
+        elif entry.status == "not_running":
+            lines.append(f"  {_esc(entry.name)}: not running")
+        elif entry.status == "not_found":
+            lines.append(f"  {_esc(entry.name)}: not found")
+        elif entry.status == "unavailable":
+            lines.append(f"  {_esc(entry.name)}: unavailable")
+        elif entry.status == "misconfigured":
+            lines.append(f"  ⚠️ {_esc(entry.name)}: misconfigured pattern")
+        elif entry.status == "errors":
+            lines.append(
+                f"  ⚠️ {_esc(entry.name)}: {_esc(entry.error_count)} events"
+            )
+            if entry.groups:
+                group_parts = [
+                    f"{_esc(key)} ({_esc(count)}x)"
+                    for key, count in sorted(
+                        entry.groups.items(),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )
+                ]
+                lines.append(f"    {_esc(', '.join(group_parts))}")
+            for sample in entry.samples:
+                lines.append(f"    - {_esc(sample)}")
+        else:
+            lines.append(f"  {_esc(entry.name)}: {_esc(entry.status)}")
+
+    return lines
+
+
 def _format_log_section(log_summary: LogScanSummary | None) -> list[str]:
     lines: list[str] = []
     lines.append("")
@@ -43,48 +86,27 @@ def _format_log_section(log_summary: LogScanSummary | None) -> list[str]:
         return lines
 
     interval = log_summary.interval_label or "unknown"
-    lines.append(
-        f"<b>Docker Logs</b> (since last check, {_esc(interval)}):"
-    )
 
-    if not log_summary.containers:
-        lines.append("  No containers configured")
-        return lines
-
-    has_errors = any(c.status == "errors" for c in log_summary.containers)
-    if not has_errors and all(c.status == "ok" for c in log_summary.containers):
+    if log_summary.containers:
         lines.append(
-            f"  All containers clean ({_esc(len(log_summary.containers))} checked)"
+            f"<b>Docker Logs</b> (since last check, {_esc(interval)}):"
         )
-        return lines
+        lines.extend(
+            _format_log_entries(log_summary.containers, "All containers clean")
+        )
 
-    for container in log_summary.containers:
-        if container.status == "ok":
-            lines.append(f"  {_esc(container.name)}: no errors")
-        elif container.status == "not_running":
-            lines.append(f"  {_esc(container.name)}: not running")
-        elif container.status == "not_found":
-            lines.append(f"  {_esc(container.name)}: not found")
-        elif container.status == "misconfigured":
-            lines.append(f"  ⚠️ {_esc(container.name)}: misconfigured pattern")
-        elif container.status == "errors":
-            lines.append(
-                f"  ⚠️ {_esc(container.name)}: {_esc(container.error_count)} errors"
-            )
-            if container.groups:
-                group_parts = [
-                    f"{_esc(key)} ({_esc(count)}x)"
-                    for key, count in sorted(
-                        container.groups.items(),
-                        key=lambda item: item[1],
-                        reverse=True,
-                    )
-                ]
-                lines.append(f"    {_esc(', '.join(group_parts))}")
-            for sample in container.samples:
-                lines.append(f"    - {_esc(sample)}")
-        else:
-            lines.append(f"  {_esc(container.name)}: {_esc(container.status)}")
+    if log_summary.host_logs:
+        if log_summary.containers:
+            lines.append("")
+        lines.append(
+            f"<b>Host Logs</b> (since last check, {_esc(interval)}):"
+        )
+        lines.extend(
+            _format_log_entries(log_summary.host_logs, "All host logs clean")
+        )
+
+    if not log_summary.containers and not log_summary.host_logs:
+        lines.append("<b>Logs:</b> nothing configured")
 
     return lines
 

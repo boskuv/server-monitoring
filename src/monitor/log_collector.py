@@ -9,7 +9,7 @@ from pathlib import Path
 import docker
 from docker.errors import DockerException
 
-from monitor.log_config import ContainerRule, LogChecksConfig, load_log_checks
+from monitor.log_config import ContainerRule, HostLogRule, LogChecksConfig, load_log_checks
 
 
 @dataclass
@@ -23,9 +23,20 @@ class ContainerLogResult:
 
 
 @dataclass
+class HostLogResult:
+    name: str
+    status: str
+    error_count: int = 0
+    groups: dict[str, int] = field(default_factory=dict)
+    samples: list[str] = field(default_factory=list)
+    interval_label: str | None = None
+
+
+@dataclass
 class LogScanSummary:
     status: str
     containers: list[ContainerLogResult] = field(default_factory=list)
+    host_logs: list[HostLogResult] = field(default_factory=list)
     interval_label: str | None = None
     message: str | None = None
 
@@ -45,14 +56,16 @@ def _format_interval(seconds: float) -> str:
 def _load_log_state(path: str) -> dict:
     state_path = Path(path)
     if not state_path.exists():
-        return {"containers": {}}
+        return {"containers": {}, "host_logs": {}}
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and "containers" in data:
+        if isinstance(data, dict):
+            data.setdefault("containers", {})
+            data.setdefault("host_logs", {})
             return data
     except (json.JSONDecodeError, OSError):
         pass
-    return {"containers": {}}
+    return {"containers": {}, "host_logs": {}}
 
 
 def _save_log_state(path: str, state: dict) -> None:
@@ -184,6 +197,111 @@ def _scan_container_logs(
     )
 
 
+_FIRST_RUN_TAIL_BYTES = 1024 * 1024
+
+
+def _scan_host_log(
+    rule: HostLogRule,
+    state_entry: dict | None,
+    now: float,
+    default_lookback_minutes: int,
+) -> tuple[HostLogResult, dict]:
+    file_path = Path(rule.path)
+    if not file_path.is_file():
+        return (
+            HostLogResult(name=rule.name, status="not_found"),
+            state_entry or {},
+        )
+
+    try:
+        error_re = re.compile(rule.error_pattern)
+    except re.error:
+        return (
+            HostLogResult(name=rule.name, status="misconfigured"),
+            state_entry or {},
+        )
+
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return (
+            HostLogResult(name=rule.name, status="not_found"),
+            state_entry or {},
+        )
+
+    inode = stat.st_ino
+    file_size = stat.st_size
+    last_inode = state_entry.get("inode") if state_entry else None
+    last_offset = int(state_entry.get("last_offset", 0)) if state_entry else 0
+
+    if last_inode is None:
+        last_offset = max(0, file_size - _FIRST_RUN_TAIL_BYTES)
+        interval_label = _format_interval(default_lookback_minutes * 60)
+    elif last_inode != inode or file_size < last_offset:
+        last_offset = 0
+        since_ts = float(state_entry.get("last_check_ts", now))
+        interval_label = _format_interval(now - since_ts)
+    else:
+        since_ts = float(state_entry.get("last_check_ts", now))
+        interval_label = _format_interval(now - since_ts)
+
+    error_count = 0
+    groups: dict[str, int] = {}
+    samples: list[str] = []
+
+    try:
+        with file_path.open("rb") as handle:
+            handle.seek(last_offset)
+            raw = handle.read()
+    except OSError:
+        return (
+            HostLogResult(
+                name=rule.name,
+                status="unavailable",
+                interval_label=interval_label,
+            ),
+            {"inode": inode, "last_offset": file_size, "last_check_ts": now},
+        )
+
+    new_offset = last_offset + len(raw)
+    text = raw.decode("utf-8", errors="replace")
+
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+
+        if not error_re.search(line):
+            continue
+
+        error_count += 1
+        group_key = _build_group_key(rule.extract, line)
+        if group_key:
+            groups[group_key] = groups.get(group_key, 0) + 1
+        else:
+            groups["(unmatched)"] = groups.get("(unmatched)", 0) + 1
+
+        if len(samples) < rule.max_samples:
+            samples.append(_truncate_line(line))
+
+    status = "errors" if error_count else "ok"
+    new_state = {
+        "inode": inode,
+        "last_offset": new_offset,
+        "last_check_ts": now,
+    }
+    return (
+        HostLogResult(
+            name=rule.name,
+            status=status,
+            error_count=error_count,
+            groups=groups,
+            samples=samples,
+            interval_label=interval_label,
+        ),
+        new_state,
+    )
+
+
 def _resolve_since_ts(
     state: dict,
     rule_name: str,
@@ -220,23 +338,31 @@ def collect_log_errors(
     if config is None:
         return LogScanSummary(status="disabled", message="config file not found")
 
-    if not config.enabled or not config.containers:
+    if not config.enabled or (not config.containers and not config.host_logs):
         return LogScanSummary(status="disabled", message="disabled")
 
-    try:
-        client = docker.from_env()
-        client.ping()
-    except DockerException as exc:
-        print(f"Docker unavailable: {exc}", file=sys.stderr)
+    state = _load_log_state(state_path)
+    now = time.time()
+    results: list[ContainerLogResult] = []
+    host_results: list[HostLogResult] = []
+    global_interval: str | None = None
+
+    docker_available = True
+    if config.containers:
+        try:
+            client = docker.from_env()
+            client.ping()
+        except DockerException as exc:
+            print(f"Docker unavailable: {exc}", file=sys.stderr)
+            docker_available = False
+
+    if config.containers and not docker_available:
         return LogScanSummary(
             status="unavailable",
             message="cannot connect to Docker",
         )
 
-    state = _load_log_state(state_path)
-    now = time.time()
-    results: list[ContainerLogResult] = []
-    global_interval: str | None = None
+    client = docker.from_env() if config.containers else None
 
     for rule in config.containers:
         running, stopped = _find_container(client, rule)
@@ -274,10 +400,24 @@ def collect_log_errors(
         results.append(result)
         state.setdefault("containers", {})[rule.name] = {"last_check_ts": now}
 
+    for rule in config.host_logs:
+        state_entry = state.get("host_logs", {}).get(rule.name)
+        result, new_entry = _scan_host_log(
+            rule,
+            state_entry,
+            now,
+            default_lookback_minutes,
+        )
+        host_results.append(result)
+        state.setdefault("host_logs", {})[rule.name] = new_entry
+        if global_interval is None and result.interval_label:
+            global_interval = result.interval_label
+
     _save_log_state(state_path, state)
 
     return LogScanSummary(
         status="ok",
         containers=results,
+        host_logs=host_results,
         interval_label=global_interval,
     )

@@ -96,6 +96,11 @@ def _evaluate_log_alerts(log_summary: LogScanSummary | None, settings) -> list[s
             reasons.append(
                 f"Logs {_esc(container.name)}: {_esc(container.error_count)} errors"
             )
+    for host_log in log_summary.host_logs:
+        if host_log.status == "errors" and host_log.error_count > 0:
+            reasons.append(
+                f"Host log {_esc(host_log.name)}: {_esc(host_log.error_count)} events"
+            )
     return reasons
 
 

@@ -17,9 +17,18 @@ class ContainerRule(BaseModel):
     max_samples: int = 2
 
 
+class HostLogRule(BaseModel):
+    name: str
+    path: str
+    error_pattern: str
+    extract: list[ExtractRule] = Field(default_factory=list)
+    max_samples: int = 3
+
+
 class LogChecksConfig(BaseModel):
     enabled: bool = True
     containers: list[ContainerRule] = Field(default_factory=list)
+    host_logs: list[HostLogRule] = Field(default_factory=list)
 
 
 def load_log_checks(path: str) -> LogChecksConfig | None:

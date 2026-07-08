@@ -10,6 +10,7 @@ A lightweight, cron-friendly service that collects host CPU, RAM, disk, and netw
 - **Network**: per-interface throughput since last run (Mbps)
 - **System**: hostname and uptime
 - **Docker Logs** (optional): scan configured containers for errors since last run, with regex extraction and grouping
+- **Host Logs** (optional): scan host log files (e.g. SSH auth.log) for access attempts since last run
 
 Runs as a one-shot container — no long-running process. Triggered by host cron via `docker compose run --rm`.
 
@@ -112,7 +113,7 @@ Log scanning is **disabled by default**. To enable:
 cp log_checks.yaml.example log_checks.yaml
 ```
 
-2. Set `enabled: true` in `log_checks.yaml` and define your containers.
+2. Set `enabled: true` in `log_checks.yaml` and define your containers and/or host logs.
 
 3. Enable in `.env`:
 
@@ -137,15 +138,40 @@ containers:
   - name: tg-bot
     match: ".*bot.*"
     error_pattern: "(?i)error"
+
+host_logs:
+  - name: auth
+    path: /host/var/log/auth.log
+    error_pattern: "(?i)(failed password|invalid user|authentication failure|accepted password|accepted publickey)"
+    extract:
+      - label: ip
+        pattern: "from ([\\d.]+) port"
+      - label: user
+        pattern: "for (?:invalid user )?(\\S+)"
+    max_samples: 3
 ```
 
 | Field | Description |
 |-------|-------------|
 | `name` | Display label in the Telegram report |
-| `match` | Regex matched against Docker container names |
-| `error_pattern` | Regex — log line must match to count as an error |
-| `extract` | Optional regex captures for grouping (e.g. `order_id=101 (3x)`) |
-| `max_samples` | Max sample error lines shown per container (default 2) |
+| `match` | Regex matched against Docker container names (containers only) |
+| `path` | Absolute path to host log file inside the monitor container (host_logs only) |
+| `error_pattern` | Regex — log line must match to count as an event |
+| `extract` | Optional regex captures for grouping (e.g. `ip=1.2.3.4, user=root (5x)`) |
+| `max_samples` | Max sample lines shown per source (default 2 for containers, 3 for host logs) |
+
+### Host auth log (SSH access attempts)
+
+The monitor container mounts the server root at `/host` (see `docker-compose.yml`). Auth log paths:
+
+| OS | Host path | Path in monitor container |
+|----|-----------|---------------------------|
+| Debian/Ubuntu | `/var/log/auth.log` | `/host/var/log/auth.log` |
+| RHEL/CentOS | `/var/log/secure` | `/host/var/log/secure` |
+
+Add a `host_logs` entry with patterns for failed logins, invalid users, and successful SSH sessions. Events are grouped by extracted IP and username. On the first run, only the last 1 MB of the file is scanned; later runs read only new lines since the last check.
+
+For local development without Docker, use the real host path (e.g. `/var/log/auth.log`) instead of `/host/...`.
 
 Each cron run scans only logs **since the last check**. The scan period equals your cron interval (e.g. 15 minutes).
 
