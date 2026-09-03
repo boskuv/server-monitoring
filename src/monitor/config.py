@@ -25,3 +25,4 @@ class Settings(BaseSettings):
     net_tx_alert_mbps: float = 0
     log_errors_trigger_alert: bool = True
     alert_cooldown_minutes: int = 120
+    log_report_attach_html: bool = True

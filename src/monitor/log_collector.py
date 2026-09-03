@@ -85,12 +85,6 @@ def _strip_container_name(name: str) -> str:
     return name.lstrip("/")
 
 
-def _truncate_line(line: str, max_len: int = 200) -> str:
-    line = line.strip()
-    if len(line) <= max_len:
-        return line
-    return line[: max_len - 3] + "..."
-
 
 def _build_group_key(extract_rules: list, line: str) -> str | None:
     parts: list[str] = []
@@ -184,7 +178,7 @@ def _scan_container_logs(
             groups["(unmatched)"] = groups.get("(unmatched)", 0) + 1
 
         if len(samples) < rule.max_samples:
-            samples.append(_truncate_line(content))
+            samples.append(content.strip())
 
     status = "errors" if error_count else "ok"
     return ContainerLogResult(
@@ -281,7 +275,7 @@ def _scan_host_log(
             groups["(unmatched)"] = groups.get("(unmatched)", 0) + 1
 
         if len(samples) < rule.max_samples:
-            samples.append(_truncate_line(line))
+            samples.append(line.strip())
 
     status = "errors" if error_count else "ok"
     new_state = {

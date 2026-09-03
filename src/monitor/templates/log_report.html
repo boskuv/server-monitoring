@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log errors — {{ hostname }}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #656d76;
+      --border: #d0d7de;
+      --accent: #cf222e;
+      --code-bg: #f6f8fa;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --card: #161b22;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --border: #30363d;
+        --accent: #ff7b72;
+        --code-bg: #0d1117;
+      }
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.5rem;
+    }
+    .meta {
+      color: var(--muted);
+      margin-bottom: 24px;
+      font-size: 0.95rem;
+    }
+    .source {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+    .source h2 {
+      margin: 0 0 8px;
+      font-size: 1.1rem;
+      color: var(--accent);
+    }
+    .count {
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .groups {
+      margin: 0 0 16px;
+      padding-left: 1.2rem;
+    }
+    .groups li {
+      margin-bottom: 4px;
+      word-break: break-word;
+    }
+    .samples h3 {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+    pre {
+      margin: 0 0 12px;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--code-bg);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h1>Log errors — {{ hostname }}</h1>
+  <p class="meta">
+    Generated {{ generated_at }}
+    {% if interval_label %} · window since last check: {{ interval_label }}{% endif %}
+  </p>
+
+  {% for entry in entries %}
+  <section class="source">
+    <h2>{{ entry.name }}</h2>
+    <p class="count">{{ entry.error_count }} events{% if entry.interval_label %} ({{ entry.interval_label }}){% endif %}</p>
+
+    {% if entry.groups %}
+    <ul class="groups">
+      {% for group, count in entry.groups %}
+      <li><code>{{ group }}</code> ({{ count }}x)</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <div class="samples">
+      <h3>Sample lines</h3>
+      {% if entry.samples %}
+        {% for sample in entry.samples %}
+        <pre>{{ sample }}</pre>
+        {% endfor %}
+      {% else %}
+        <p class="empty">No samples collected.</p>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+</body>
+</html>

@@ -4,8 +4,13 @@ from monitor.alerting import decide_report, format_alert_report, record_sent
 from monitor.collectors import collect_all
 from monitor.config import Settings
 from monitor.log_collector import collect_log_errors
-from monitor.reporter import format_report
-from monitor.telegram import send_message
+from monitor.log_report_html import (
+    build_log_attachment_filename,
+    format_log_attachment_caption,
+    render_log_errors_html,
+)
+from monitor.reporter import format_report, log_summary_has_errors
+from monitor.telegram import send_document, send_message
 
 
 def main() -> int:
@@ -56,12 +61,34 @@ def main() -> int:
             chat_id=settings.telegram_chat_id,
             text=report,
         )
+
+        if (
+            settings.log_report_attach_html
+            and log_summary_has_errors(log_summary)
+            and log_summary is not None
+        ):
+            html_report = render_log_errors_html(
+                log_summary,
+                hostname=metrics.system.hostname,
+            )
+            send_document(
+                token=settings.telegram_bot_token,
+                chat_id=settings.telegram_chat_id,
+                filename=build_log_attachment_filename(metrics.system.hostname),
+                content=html_report.encode("utf-8"),
+                caption=format_log_attachment_caption(log_summary),
+            )
     except Exception as exc:
         print(f"Failed to send Telegram message: {exc}", file=sys.stderr)
         return 1
 
     record_sent(decision, settings.report_state_file)
-    print(f"Report sent ({decision.report_type}).")
+    attachment_note = (
+        " + HTML log attachment"
+        if settings.log_report_attach_html and log_summary_has_errors(log_summary)
+        else ""
+    )
+    print(f"Report sent ({decision.report_type}){attachment_note}.")
     return 0
 
 

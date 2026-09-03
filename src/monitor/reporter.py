@@ -3,6 +3,14 @@ import html
 from monitor.log_collector import LogScanSummary
 
 TELEGRAM_MAX_LENGTH = 4096
+TELEGRAM_SAMPLE_MAX_LENGTH = 200
+
+
+def _truncate_sample(line: str, max_len: int = TELEGRAM_SAMPLE_MAX_LENGTH) -> str:
+    line = line.strip()
+    if len(line) <= max_len:
+        return line
+    return line[: max_len - 3] + "..."
 
 
 def _format_uptime(seconds: int) -> str:
@@ -56,7 +64,7 @@ def _format_log_entries(
                 ]
                 lines.append(f"    {_esc(', '.join(group_parts))}")
             for sample in entry.samples:
-                lines.append(f"    - {_esc(sample)}")
+                lines.append(f"    - {_esc(_truncate_sample(sample))}")
         else:
             lines.append(f"  {_esc(entry.name)}: {_esc(entry.status)}")
 
@@ -119,6 +127,16 @@ def _truncate_report(text: str, max_len: int = TELEGRAM_MAX_LENGTH) -> str:
     if "\n" in trimmed:
         trimmed = trimmed.rsplit("\n", 1)[0]
     return trimmed + "\n... (truncated)"
+
+
+def log_summary_has_errors(log_summary: LogScanSummary | None) -> bool:
+    if log_summary is None or log_summary.status != "ok":
+        return False
+
+    for entry in (*log_summary.containers, *log_summary.host_logs):
+        if entry.status == "errors" and entry.error_count > 0:
+            return True
+    return False
 
 
 def format_report(
