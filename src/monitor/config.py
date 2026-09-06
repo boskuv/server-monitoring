@@ -26,3 +26,5 @@ class Settings(BaseSettings):
     log_errors_trigger_alert: bool = True
     alert_cooldown_minutes: int = 120
     log_report_attach_html: bool = True
+    # When false, HTML log details are attached only to daily/full reports, not alerts.
+    log_report_attach_on_alert: bool = True

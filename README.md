@@ -60,6 +60,7 @@ docker compose --profile monitor run --rm monitor
 | `LOG_ERRORS_TRIGGER_ALERT` | no | `true` | Docker log errors trigger alert |
 | `ALERT_COOLDOWN_MINUTES` | no | `120` | Min interval between alert messages |
 | `LOG_REPORT_ATTACH_HTML` | no | `true` | Attach full log error details as HTML file |
+| `LOG_REPORT_ATTACH_ON_ALERT` | no | `true` | Attach HTML on alerts; `false` = only with daily/full reports |
 
 ## Conditional report delivery
 
@@ -180,7 +181,7 @@ The report always includes a **Docker Logs** section:
 - `disabled` when `LOG_CHECKS_ENABLED=false`
 - `no errors` per container when clean
 - grouped error counts and sample lines when errors are found
-- optional **HTML attachment** with full sample lines when log errors are detected (`LOG_REPORT_ATTACH_HTML=true`)
+- optional **HTML attachment** with full sample lines when log errors are detected (`LOG_REPORT_ATTACH_HTML=true`); set `LOG_REPORT_ATTACH_ON_ALERT=false` to attach only with the daily/full report, not with short alerts
 
 Requires read-only access to `/var/run/docker.sock` (already configured in `docker-compose.yml`).
 

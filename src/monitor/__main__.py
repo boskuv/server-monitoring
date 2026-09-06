@@ -55,6 +55,16 @@ def main() -> int:
             log_summary=log_summary,
         )
 
+    attach_html = (
+        settings.log_report_attach_html
+        and log_summary_has_errors(log_summary)
+        and log_summary is not None
+        and (
+            decision.report_type != "alert"
+            or settings.log_report_attach_on_alert
+        )
+    )
+
     try:
         send_message(
             token=settings.telegram_bot_token,
@@ -62,11 +72,7 @@ def main() -> int:
             text=report,
         )
 
-        if (
-            settings.log_report_attach_html
-            and log_summary_has_errors(log_summary)
-            and log_summary is not None
-        ):
+        if attach_html:
             html_report = render_log_errors_html(
                 log_summary,
                 hostname=metrics.system.hostname,
@@ -83,11 +89,7 @@ def main() -> int:
         return 1
 
     record_sent(decision, settings.report_state_file)
-    attachment_note = (
-        " + HTML log attachment"
-        if settings.log_report_attach_html and log_summary_has_errors(log_summary)
-        else ""
-    )
+    attachment_note = " + HTML log attachment" if attach_html else ""
     print(f"Report sent ({decision.report_type}){attachment_note}.")
     return 0
 
