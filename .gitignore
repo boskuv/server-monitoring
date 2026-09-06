@@ -6,3 +6,6 @@ venv/
 data/net_state.json
 data/log_state.json
 data/report_state.json
+
+logs/*
+log_checks.yaml
