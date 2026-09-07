@@ -97,7 +97,7 @@ def _format_log_section(log_summary: LogScanSummary | None) -> list[str]:
 
     if log_summary.containers:
         lines.append(
-            f"<b>Docker Logs</b> (since last check, {_esc(interval)}):"
+            f"<b>Docker Logs</b> (since last report, {_esc(interval)}):"
         )
         lines.extend(
             _format_log_entries(log_summary.containers, "All containers clean")
@@ -107,7 +107,7 @@ def _format_log_section(log_summary: LogScanSummary | None) -> list[str]:
         if log_summary.containers:
             lines.append("")
         lines.append(
-            f"<b>Host Logs</b> (since last check, {_esc(interval)}):"
+            f"<b>Host Logs</b> (since last report, {_esc(interval)}):"
         )
         lines.extend(
             _format_log_entries(log_summary.host_logs, "All host logs clean")

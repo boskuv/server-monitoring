@@ -94,7 +94,7 @@
   <h1>Log errors — {{ hostname }}</h1>
   <p class="meta">
     Generated {{ generated_at }}
-    {% if interval_label %} · window since last check: {{ interval_label }}{% endif %}
+    {% if interval_label %} · window since last report: {{ interval_label }}{% endif %}
   </p>
 
   {% for entry in entries %}

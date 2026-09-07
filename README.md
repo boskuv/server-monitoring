@@ -9,8 +9,8 @@ A lightweight, cron-friendly service that collects host CPU, RAM, disk, and netw
 - **Disk**: per-mount usage with warning markers above threshold
 - **Network**: per-interface throughput since last run (Mbps)
 - **System**: hostname and uptime
-- **Docker Logs** (optional): scan configured containers for errors since last run, with regex extraction and grouping
-- **Host Logs** (optional): scan host log files (e.g. SSH auth.log) for access attempts since last run
+- **Docker Logs** (optional): scan configured containers for errors since the last daily report, with regex extraction and grouping
+- **Host Logs** (optional): scan host log files (e.g. SSH auth.log) for access attempts since the last daily report
 
 Runs as a one-shot container — no long-running process. Triggered by host cron via `docker compose run --rm`.
 
@@ -28,10 +28,10 @@ cp .env.example .env
 docker compose --profile monitor run --rm monitor
 ```
 
-3. Add to host cron (example: every 15 minutes):
+3. Add to host cron (every 3 hours, aligned to 04:00 MSK / 01:00 UTC):
 
 ```cron
-*/15 * * * * cd /path/to/monitoring-service && docker compose --profile monitor run --rm monitor >> /var/log/infra-monitor.log 2>&1
+0 1,4,7,10,13,16,19,22 * * * cd /path/to/monitoring-service && docker compose --profile monitor run --rm monitor >> /var/log/infra-monitor.log 2>&1
 ```
 
 ## Configuration
@@ -57,10 +57,10 @@ docker compose --profile monitor run --rm monitor
 | `LOAD_ALERT_PER_CORE` | no | `0` | Load average per core threshold |
 | `NET_RX_ALERT_MBPS` | no | `0` | Network RX Mbps threshold |
 | `NET_TX_ALERT_MBPS` | no | `0` | Network TX Mbps threshold |
-| `LOG_ERRORS_TRIGGER_ALERT` | no | `true` | Docker log errors trigger alert |
+| `LOG_ERRORS_TRIGGER_ALERT` | no | `false` | Unused (logs never trigger alerts; kept for compatibility) |
 | `ALERT_COOLDOWN_MINUTES` | no | `120` | Min interval between alert messages |
-| `LOG_REPORT_ATTACH_HTML` | no | `true` | Attach full log error details as HTML file |
-| `LOG_REPORT_ATTACH_ON_ALERT` | no | `true` | Attach HTML on alerts; `false` = only with daily/full reports |
+| `LOG_REPORT_ATTACH_HTML` | no | `true` | Attach full log error details as HTML on daily/full reports |
+| `LOG_REPORT_ATTACH_ON_ALERT` | no | `false` | Unused (HTML is never attached to alerts) |
 
 ## Conditional report delivery
 
@@ -68,7 +68,7 @@ By default every run sends a full report (`REPORT_MODE=always`). For frequent cr
 
 ```env
 REPORT_MODE=scheduled_or_alert
-REPORT_DAILY_HOUR=9
+REPORT_DAILY_HOUR=1
 REPORT_DAILY_MINUTE=0
 
 CPU_ALERT_PERCENT=90
@@ -77,22 +77,23 @@ DISK_ALERT_PERCENT=90
 LOAD_ALERT_PER_CORE=2.0
 NET_RX_ALERT_MBPS=50
 NET_TX_ALERT_MBPS=50
-LOG_ERRORS_TRIGGER_ALERT=true
 ALERT_COOLDOWN_MINUTES=120
 ```
 
-Cron can run every 30 minutes — metrics and logs are **always collected**, but Telegram messages are sent only when:
+`REPORT_DAILY_HOUR=1` is **01:00 UTC = 04:00 MSK**. Cron hours must include that slot (or a later one the same day).
 
-1. **Daily report** — first run at or after `REPORT_DAILY_HOUR:REPORT_DAILY_MINUTE` UTC each day → **full report**
-2. **Threshold alert** — CPU/RAM/disk/load/network/logs exceed configured limits → **short alert message**
+Metrics are collected every cron run, but Telegram messages are sent only when:
+
+1. **Daily report** — first run at or after `REPORT_DAILY_HOUR:REPORT_DAILY_MINUTE` UTC → **full report** (includes log scan + optional HTML; log offsets advance only after a successful send)
+2. **Threshold alert** — CPU/RAM/disk/load/network exceed configured limits → **short alert** (metrics only; no logs)
 3. Otherwise — silent exit 0 (`Report skipped`)
 
 Threshold alerts respect `ALERT_COOLDOWN_MINUTES` to avoid spam. Daily reports are not affected by cooldown.
 
-Example cron:
+Example cron (every 3 hours, first slot 01:00 UTC / 04:00 MSK):
 
 ```cron
-*/30 * * * * cd /path/to/monitoring-service && docker compose --profile monitor run --rm monitor >> /var/log/infra-monitor.log 2>&1
+0 1,4,7,10,13,16,19,22 * * * cd /path/to/monitoring-service && docker compose --profile monitor run --rm monitor >> /var/log/infra-monitor.log 2>&1
 ```
 
 Short alert example:
@@ -102,7 +103,6 @@ Short alert example:
 
 • CPU 95.2% (threshold 90%)
 • RAM 87.3% (threshold 85%)
-• Logs backend: 5 errors
 ```
 
 ## Docker log monitoring
@@ -171,17 +171,17 @@ The monitor container mounts the server root at `/host` (see `docker-compose.yml
 | Debian/Ubuntu | `/var/log/auth.log` | `/host/var/log/auth.log` |
 | RHEL/CentOS | `/var/log/secure` | `/host/var/log/secure` |
 
-Add a `host_logs` entry with patterns for failed logins, invalid users, and successful SSH sessions. Events are grouped by extracted IP and username. On the first run, only the last 1 MB of the file is scanned; later runs read only new lines since the last check.
+Add a `host_logs` entry with patterns for failed logins, invalid users, and successful SSH sessions. Events are grouped by extracted IP and username. On the first run, only the last 1 MB of the file is scanned; later runs read only new lines since the last committed check.
 
 For local development without Docker, use the real host path (e.g. `/var/log/auth.log`) instead of `/host/...`.
 
-Each cron run scans only logs **since the last check**. The scan period equals your cron interval (e.g. 15 minutes).
+Logs are scanned **only on full/daily reports** (not on skip or metric alerts). The window is since the previous successful daily send (typically ~24h with daily cron alignment). Offsets advance only after Telegram delivery succeeds.
 
-The report always includes a **Docker Logs** section:
+The full report includes a **Docker Logs** / **Host Logs** section:
 - `disabled` when `LOG_CHECKS_ENABLED=false`
-- `no errors` per container when clean
-- grouped error counts and sample lines when errors are found
-- optional **HTML attachment** with full sample lines when log errors are detected (`LOG_REPORT_ATTACH_HTML=true`); set `LOG_REPORT_ATTACH_ON_ALERT=false` to attach only with the daily/full report, not with short alerts
+- `no errors` / `no events` when clean
+- grouped counts and sample lines when events are found
+- optional **HTML attachment** with full sample lines (`LOG_REPORT_ATTACH_HTML=true`)
 
 Requires read-only access to `/var/run/docker.sock` (already configured in `docker-compose.yml`).
 

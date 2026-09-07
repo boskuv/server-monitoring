@@ -23,8 +23,9 @@ class Settings(BaseSettings):
     load_alert_per_core: float = 0
     net_rx_alert_mbps: float = 0
     net_tx_alert_mbps: float = 0
-    log_errors_trigger_alert: bool = True
+    # Kept for compatibility; log scans no longer feed alert decisions.
+    log_errors_trigger_alert: bool = False
     alert_cooldown_minutes: int = 120
     log_report_attach_html: bool = True
-    # When false, HTML log details are attached only to daily/full reports, not alerts.
-    log_report_attach_on_alert: bool = True
+    # Unused: HTML is attached only to full/daily reports.
+    log_report_attach_on_alert: bool = False

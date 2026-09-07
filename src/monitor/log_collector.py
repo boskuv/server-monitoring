@@ -313,27 +313,38 @@ def _resolve_since_ts(
     return since_ts, _format_interval(default_lookback_minutes * 60)
 
 
+def save_log_state(path: str, state: dict) -> None:
+    """Persist log scan cursors (call only after a successful full report send)."""
+    _save_log_state(path, state)
+
+
 def collect_log_errors(
     enabled: bool,
     config_path: str,
     state_path: str,
     default_lookback_minutes: int,
-) -> LogScanSummary:
+) -> tuple[LogScanSummary, dict | None]:
+    """Scan logs since the last committed cursors.
+
+    Returns ``(summary, pending_state)``. ``pending_state`` is set when a scan
+    ran successfully and should be saved only after the daily/full report is
+    delivered — so skip/alert cron runs do not advance offsets.
+    """
     if not enabled:
-        return LogScanSummary(status="disabled", message="disabled")
+        return LogScanSummary(status="disabled", message="disabled"), None
 
     config: LogChecksConfig | None
     try:
         config = load_log_checks(config_path)
     except Exception as exc:
         print(f"Log checks config error: {exc}", file=sys.stderr)
-        return LogScanSummary(status="misconfigured", message=str(exc))
+        return LogScanSummary(status="misconfigured", message=str(exc)), None
 
     if config is None:
-        return LogScanSummary(status="disabled", message="config file not found")
+        return LogScanSummary(status="disabled", message="config file not found"), None
 
     if not config.enabled or (not config.containers and not config.host_logs):
-        return LogScanSummary(status="disabled", message="disabled")
+        return LogScanSummary(status="disabled", message="disabled"), None
 
     state = _load_log_state(state_path)
     now = time.time()
@@ -351,9 +362,12 @@ def collect_log_errors(
             docker_available = False
 
     if config.containers and not docker_available:
-        return LogScanSummary(
-            status="unavailable",
-            message="cannot connect to Docker",
+        return (
+            LogScanSummary(
+                status="unavailable",
+                message="cannot connect to Docker",
+            ),
+            None,
         )
 
     client = docker.from_env() if config.containers else None
@@ -407,11 +421,10 @@ def collect_log_errors(
         if global_interval is None and result.interval_label:
             global_interval = result.interval_label
 
-    _save_log_state(state_path, state)
-
-    return LogScanSummary(
+    summary = LogScanSummary(
         status="ok",
         containers=results,
         host_logs=host_results,
         interval_label=global_interval,
     )
+    return summary, state
