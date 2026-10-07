@@ -22,6 +22,18 @@ containers:
     match: "postgres"
     error_pattern: "(?i)(error|fatal|panic)"
 
+  # Caddy: access log on stdout (enable JSON access logging in Caddyfile).
+  # Failed basic auth appears as HTTP 401 in access logs.
+  - name: caddy
+    match: "caddy"
+    error_pattern: '"status":401'
+    extract:
+      - label: ip
+        pattern: '"remote_ip":"([^"]+)"'
+      - label: host
+        pattern: '"host":"([^"]+)"'
+    max_samples: 5
+
 # Host system logs (SSH auth, etc.) — path is inside the monitor container.
 # With docker-compose, /host is the server root (see README).
 host_logs:
@@ -33,4 +45,24 @@ host_logs:
         pattern: "from ([\\d.]+) port"
       - label: user
         pattern: "for (?:invalid user )?(\\S+)"
+    max_samples: 3
+
+  # Caddy access log file (alternative to container stdout above — use one, not both).
+  # Mount /var/log/caddy on the host and enable JSON format in Caddyfile.
+  - name: caddy-auth-fail
+    path: /host/var/log/caddy/access.log
+    error_pattern: '"status":401'
+    extract:
+      - label: ip
+        pattern: '"remote_ip":"([^"]+)"'
+      - label: host
+        pattern: '"host":"([^"]+)"'
+    max_samples: 5
+
+  - name: caddy-forbidden
+    path: /host/var/log/caddy/access.log
+    error_pattern: '"status":403'
+    extract:
+      - label: ip
+        pattern: '"remote_ip":"([^"]+)"'
     max_samples: 3

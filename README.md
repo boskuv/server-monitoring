@@ -141,6 +141,16 @@ containers:
     match: ".*bot.*"
     error_pattern: "(?i)error"
 
+  - name: caddy
+    match: "caddy"
+    error_pattern: '"status":401'
+    extract:
+      - label: ip
+        pattern: '"remote_ip":"([^"]+)"'
+      - label: host
+        pattern: '"host":"([^"]+)"'
+    max_samples: 5
+
 host_logs:
   - name: auth
     path: /host/var/log/auth.log
@@ -151,6 +161,16 @@ host_logs:
       - label: user
         pattern: "for (?:invalid user )?(\\S+)"
     max_samples: 3
+
+  - name: caddy-auth-fail
+    path: /host/var/log/caddy/access.log
+    error_pattern: '"status":401'
+    extract:
+      - label: ip
+        pattern: '"remote_ip":"([^"]+)"'
+      - label: host
+        pattern: '"host":"([^"]+)"'
+    max_samples: 5
 ```
 
 | Field | Description |
@@ -174,6 +194,28 @@ The monitor container mounts the server root at `/host` (see `docker-compose.yml
 Add a `host_logs` entry with patterns for failed logins, invalid users, and successful SSH sessions. Events are grouped by extracted IP and username. On the first run, only the last 1 MB of the file is scanned; later runs read only new lines since the last committed check.
 
 For local development without Docker, use the real host path (e.g. `/var/log/auth.log`) instead of `/host/...`.
+
+### Caddy access log (basic auth failures)
+
+Enable **JSON** access logging in Caddy (file or stdout). Failed basic auth shows up as **`"status":401`** — there is no separate “wrong password” line in the log.
+
+Example global block in Caddyfile:
+
+```
+{
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+```
+
+If Caddy runs in Docker, either scan **container logs** (`match: "caddy"`) or mount the log directory on the host and use `/host/var/log/caddy/access.log`. Use one source, not both.
+
+Optional `host_logs` entry for 403 responses uses the same JSON fields. Pair with rate limits or fail2ban/CrowdSec if you need blocking, not just daily counts in Telegram.
 
 Logs are scanned **only on full/daily reports** (not on skip or metric alerts). The window is since the previous successful daily send (typically ~24h with daily cron alignment). Offsets advance only after Telegram delivery succeeds.
 
