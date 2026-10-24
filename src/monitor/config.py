@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     log_errors_trigger_alert: bool = False
     alert_cooldown_minutes: int = 120
     top_consumers: int = 5
+    container_watch_enabled: bool = True
+    container_state_file: str = "/data/container_state.json"
     log_report_attach_html: bool = True
     # Unused: HTML is attached only to full/daily reports.
     log_report_attach_on_alert: bool = False

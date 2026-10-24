@@ -7,6 +7,7 @@ A lightweight, cron-friendly service that collects host CPU, RAM, disk, and netw
 - **CPU**: usage %, load average (1/5/15 min), core count
 - **RAM & Swap**: used/total and percentage
 - **Top consumers**: top containers (or host processes) by CPU and RAM
+- **Containers**: restarts, stops, crashes, and removal of a running container since the previous run
 - **Disk**: per-mount usage with warning markers above threshold
 - **Network**: per-interface throughput since last run (Mbps)
 - **System**: hostname and uptime
@@ -61,6 +62,8 @@ docker compose --profile monitor run --rm monitor
 | `LOG_ERRORS_TRIGGER_ALERT` | no | `false` | Unused (logs never trigger alerts; kept for compatibility) |
 | `ALERT_COOLDOWN_MINUTES` | no | `120` | Min interval between alert messages |
 | `TOP_CONSUMERS` | no | `5` | Top containers/processes by CPU and RAM in reports and CPU/RAM alerts (`0` = off) |
+| `CONTAINER_WATCH_ENABLED` | no | `true` | Report container restarts, stops, and crashes |
+| `CONTAINER_STATE_FILE` | no | `/data/container_state.json` | Previous container snapshot |
 | `LOG_REPORT_ATTACH_HTML` | no | `true` | Attach full log error details as HTML on daily/full reports |
 | `LOG_REPORT_ATTACH_ON_ALERT` | no | `false` | Unused (HTML is never attached to alerts) |
 
@@ -89,9 +92,10 @@ Metrics are collected every cron run, but Telegram messages are sent only when:
 
 1. **Daily report** — first run at or after `REPORT_DAILY_HOUR:REPORT_DAILY_MINUTE` UTC → **full report** (includes log scan + optional HTML; log offsets advance only after a successful send)
 2. **Threshold alert** — CPU/RAM/disk/load/network exceed configured limits → **short alert** (metrics only; no logs). CPU, load, and RAM alerts also include the top resource consumers.
-3. Otherwise — silent exit 0 (`Report skipped`)
+3. **Container alert** — a container restarted, stopped, crashed, or a running container disappeared → **short alert**. These are not delayed by the metric cooldown.
+4. Otherwise — silent exit 0 (`Report skipped`)
 
-Threshold alerts respect `ALERT_COOLDOWN_MINUTES` to avoid spam. Daily reports are not affected by cooldown.
+Threshold alerts respect `ALERT_COOLDOWN_MINUTES` to avoid spam. Daily reports and container alerts are not affected by cooldown. A container-only alert does not start the metric cooldown.
 
 Example cron (every 3 hours, first slot 01:00 UTC / 04:00 MSK):
 
@@ -117,6 +121,19 @@ Top RAM:
 ```
 
 CPU percentages in the top lists are a share of the whole host (same scale as the CPU line). Processes inside a container are summed under the container name. Host processes outside Docker are labeled `host:` when containers are present. Set `TOP_CONSUMERS=0` to hide the lists. This needs `pid: host` (already set) so the monitor can see host processes, and the Docker socket to resolve container names.
+
+## Container restarts, stops, and crashes
+
+Enabled by default (`CONTAINER_WATCH_ENABLED=true`). Each run inspects containers through the Docker socket and compares them with `/data/container_state.json`. The first run only stores a baseline.
+
+| What happened | How it is reported |
+|---------------|--------------------|
+| `RestartCount` increased, or the container started again and is running | `restarted` / `restarted N times` |
+| Running container exited `0` or `143` (clean stop / SIGTERM) | `stopped` |
+| Exited with another code, OOM, `dead`, or currently `restarting` | `crashed` or `crash-looping` |
+| Running container disappeared and nothing with the same name replaced it | `removed` |
+
+A recreate with the same name (a normal deploy) is not an alert. The one-shot monitor container itself is ignored. Incidents are included in the full report and, in `scheduled_or_alert` mode, also sent as their own alert. The snapshot advances only after that message is sent, so a failed send is retried next run. Set `CONTAINER_WATCH_ENABLED=false` to turn this off.
 
 ## Docker log monitoring
 

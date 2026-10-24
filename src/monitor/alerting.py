@@ -14,6 +14,8 @@ class SendDecision:
     should_send: bool
     report_type: str  # full | alert | skip
     reasons: list[str] = field(default_factory=list)
+    # Metric alerts share a cooldown. Container restarts/stops/crashes do not.
+    counts_toward_cooldown: bool = True
 
 
 def _load_report_state(path: str) -> dict:
@@ -105,6 +107,18 @@ def _evaluate_log_alerts(log_summary: LogScanSummary | None, settings) -> list[s
     return reasons
 
 
+def _evaluate_container_alerts(container_watch, settings) -> list[str]:
+    if not getattr(settings, "container_watch_enabled", True):
+        return []
+    if container_watch is None or getattr(container_watch, "status", None) != "ok":
+        return []
+
+    reasons: list[str] = []
+    for event in container_watch.events:
+        reasons.append(f"Container {_esc(event.name)}: {_esc(event.detail)}")
+    return reasons
+
+
 def _is_daily_due(now_utc: datetime, last_daily_date: str | None, settings) -> bool:
     today = now_utc.strftime("%Y-%m-%d")
     if last_daily_date == today:
@@ -120,6 +134,7 @@ def decide_report(
     log_summary: LogScanSummary | None,
     settings,
     report_state_path: str,
+    container_watch=None,
 ) -> SendDecision:
     if settings.report_mode == "always":
         return SendDecision(should_send=True, report_type="full", reasons=["always"])
@@ -128,7 +143,8 @@ def decide_report(
     now_utc = datetime.now(timezone.utc)
     threshold_reasons = _evaluate_thresholds(metrics, settings)
     log_reasons = _evaluate_log_alerts(log_summary, settings)
-    alert_reasons = threshold_reasons + log_reasons
+    metric_reasons = threshold_reasons + log_reasons
+    container_reasons = _evaluate_container_alerts(container_watch, settings)
 
     if _is_daily_due(now_utc, state.get("last_daily_sent_date"), settings):
         return SendDecision(
@@ -137,15 +153,24 @@ def decide_report(
             reasons=["scheduled daily report"],
         )
 
-    if alert_reasons:
-        last_alert_ts = state.get("last_alert_ts", 0)
-        elapsed = time.time() - float(last_alert_ts)
-        if elapsed >= settings.alert_cooldown_minutes * 60:
-            return SendDecision(
-                should_send=True,
-                report_type="alert",
-                reasons=alert_reasons,
-            )
+    last_alert_ts = state.get("last_alert_ts", 0)
+    elapsed = time.time() - float(last_alert_ts)
+    metric_ready = elapsed >= settings.alert_cooldown_minutes * 60
+    send_metrics = bool(metric_reasons) and metric_ready
+    send_containers = bool(container_reasons)
+
+    if send_metrics or send_containers:
+        reasons = []
+        if send_metrics:
+            reasons.extend(metric_reasons)
+        if send_containers:
+            reasons.extend(container_reasons)
+        return SendDecision(
+            should_send=True,
+            report_type="alert",
+            reasons=reasons,
+            counts_toward_cooldown=send_metrics,
+        )
 
     return SendDecision(should_send=False, report_type="skip", reasons=[])
 
@@ -160,8 +185,10 @@ def record_sent(decision: SendDecision, report_state_path: str) -> None:
     if decision.report_type == "full":
         state["last_daily_sent_date"] = now_utc.strftime("%Y-%m-%d")
 
-    if decision.report_type == "alert":
+    if decision.report_type == "alert" and decision.counts_toward_cooldown:
         state["last_alert_ts"] = time.time()
+    elif decision.report_type != "full":
+        return
 
     _save_report_state(report_state_path, state)
 

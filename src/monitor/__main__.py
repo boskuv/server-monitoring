@@ -3,6 +3,7 @@ import sys
 from monitor.alerting import decide_report, format_alert_report, record_sent
 from monitor.collectors import collect_all
 from monitor.config import Settings
+from monitor.container_watch import collect_container_watch, save_container_state
 from monitor.log_collector import collect_log_errors, save_log_state
 from monitor.log_report_html import (
     build_log_attachment_filename,
@@ -25,6 +26,17 @@ def main() -> int:
         hostname_override=settings.hostname_override,
         top_consumers=settings.top_consumers,
     )
+    container_watch = collect_container_watch(
+        enabled=settings.container_watch_enabled,
+        state_path=settings.container_state_file,
+    )
+    # No incidents: keep the snapshot current even when the report is skipped.
+    # Incidents stay uncommitted until Telegram accepts the message.
+    pending_container_state = None
+    if container_watch.new_state is not None and not container_watch.events:
+        save_container_state(settings.container_state_file, container_watch.new_state)
+    elif container_watch.events:
+        pending_container_state = container_watch.new_state
 
     # Logs are never used for alert decisions — only metrics. Scan + offset
     # commit happen only for full/daily reports after a successful send.
@@ -33,6 +45,7 @@ def main() -> int:
         log_summary=None,
         settings=settings,
         report_state_path=settings.report_state_file,
+        container_watch=container_watch,
     )
 
     if not decision.should_send:
@@ -59,6 +72,7 @@ def main() -> int:
             metrics,
             disk_warn_percent=settings.disk_warn_percent,
             log_summary=log_summary,
+            container_watch=container_watch,
         )
 
     attach_html = (
@@ -93,6 +107,8 @@ def main() -> int:
 
     if pending_log_state is not None:
         save_log_state(settings.log_state_file, pending_log_state)
+    if pending_container_state is not None:
+        save_container_state(settings.container_state_file, pending_container_state)
 
     record_sent(decision, settings.report_state_file)
     attachment_note = " + HTML log attachment" if attach_html else ""

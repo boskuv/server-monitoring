@@ -193,10 +193,33 @@ def log_summary_has_errors(log_summary: LogScanSummary | None) -> bool:
     return False
 
 
+def _format_container_section(container_watch) -> list[str]:
+    if container_watch is None or container_watch.status == "disabled":
+        return []
+
+    lines = ["", "<b>Containers:</b>"]
+    if container_watch.status == "unavailable":
+        lines.append(
+            "  unavailable "
+            f"({_esc(container_watch.message or 'cannot connect to Docker')})"
+        )
+        return lines
+    if container_watch.status == "baseline":
+        lines.append("  baseline saved")
+        return lines
+    if not container_watch.events:
+        lines.append("  no restarts, stops, or crashes")
+        return lines
+    for event in container_watch.events:
+        lines.append(f"  ⚠️ {_esc(event.name)}: {_esc(event.detail)}")
+    return lines
+
+
 def format_report(
     metrics,
     disk_warn_percent: int,
     log_summary: LogScanSummary | None = None,
+    container_watch=None,
 ) -> str:
     system = metrics.system
     lines: list[str] = []
@@ -263,5 +286,6 @@ def format_report(
     else:
         lines.append("  No network interfaces found")
 
+    lines.extend(_format_container_section(container_watch))
     lines.extend(_format_log_section(log_summary))
     return _truncate_report("\n".join(lines))
