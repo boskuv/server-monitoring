@@ -23,6 +23,7 @@ def main() -> int:
     metrics = collect_all(
         state_file=settings.state_file,
         hostname_override=settings.hostname_override,
+        top_consumers=settings.top_consumers,
     )
 
     # Logs are never used for alert decisions — only metrics. Scan + offset

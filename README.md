@@ -6,6 +6,7 @@ A lightweight, cron-friendly service that collects host CPU, RAM, disk, and netw
 
 - **CPU**: usage %, load average (1/5/15 min), core count
 - **RAM & Swap**: used/total and percentage
+- **Top consumers**: top containers (or host processes) by CPU and RAM
 - **Disk**: per-mount usage with warning markers above threshold
 - **Network**: per-interface throughput since last run (Mbps)
 - **System**: hostname and uptime
@@ -59,6 +60,7 @@ docker compose --profile monitor run --rm monitor
 | `NET_TX_ALERT_MBPS` | no | `0` | Network TX Mbps threshold |
 | `LOG_ERRORS_TRIGGER_ALERT` | no | `false` | Unused (logs never trigger alerts; kept for compatibility) |
 | `ALERT_COOLDOWN_MINUTES` | no | `120` | Min interval between alert messages |
+| `TOP_CONSUMERS` | no | `5` | Top containers/processes by CPU and RAM in reports and CPU/RAM alerts (`0` = off) |
 | `LOG_REPORT_ATTACH_HTML` | no | `true` | Attach full log error details as HTML on daily/full reports |
 | `LOG_REPORT_ATTACH_ON_ALERT` | no | `false` | Unused (HTML is never attached to alerts) |
 
@@ -78,6 +80,7 @@ LOAD_ALERT_PER_CORE=2.0
 NET_RX_ALERT_MBPS=50
 NET_TX_ALERT_MBPS=50
 ALERT_COOLDOWN_MINUTES=120
+TOP_CONSUMERS=5
 ```
 
 `REPORT_DAILY_HOUR=1` is **01:00 UTC = 04:00 MSK**. Cron hours must include that slot (or a later one the same day).
@@ -85,7 +88,7 @@ ALERT_COOLDOWN_MINUTES=120
 Metrics are collected every cron run, but Telegram messages are sent only when:
 
 1. **Daily report** — first run at or after `REPORT_DAILY_HOUR:REPORT_DAILY_MINUTE` UTC → **full report** (includes log scan + optional HTML; log offsets advance only after a successful send)
-2. **Threshold alert** — CPU/RAM/disk/load/network exceed configured limits → **short alert** (metrics only; no logs)
+2. **Threshold alert** — CPU/RAM/disk/load/network exceed configured limits → **short alert** (metrics only; no logs). CPU, load, and RAM alerts also include the top resource consumers.
 3. Otherwise — silent exit 0 (`Report skipped`)
 
 Threshold alerts respect `ALERT_COOLDOWN_MINUTES` to avoid spam. Daily reports are not affected by cooldown.
@@ -103,7 +106,17 @@ Short alert example:
 
 • CPU 95.2% (threshold 90%)
 • RAM 87.3% (threshold 85%)
+
+Top CPU:
+  backend     61.0% | 1.2 GB
+  postgres    18.2% | 640 MB
+
+Top RAM:
+  backend     1.2 GB (28.1%) | 61.0% CPU
+  postgres    640 MB (15.4%) | 18.2% CPU
 ```
+
+CPU percentages in the top lists are a share of the whole host (same scale as the CPU line). Processes inside a container are summed under the container name. Host processes outside Docker are labeled `host:` when containers are present. Set `TOP_CONSUMERS=0` to hide the lists. This needs `pid: host` (already set) so the monitor can see host processes, and the Docker socket to resolve container names.
 
 ## Docker log monitoring
 

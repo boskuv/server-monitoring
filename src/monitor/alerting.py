@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from monitor.log_collector import LogScanSummary
+from monitor.reporter import extend_top_consumers
 
 
 @dataclass
@@ -173,4 +174,8 @@ def format_alert_report(metrics, reasons: list[str]) -> str:
     ]
     for reason in reasons:
         lines.append(f"• {reason}")
+
+    wants_cpu = any(reason.startswith(("CPU ", "Load ")) for reason in reasons)
+    wants_ram = any(reason.startswith("RAM ") for reason in reasons)
+    extend_top_consumers(lines, metrics, cpu=wants_cpu, memory=wants_ram)
     return "\n".join(lines)

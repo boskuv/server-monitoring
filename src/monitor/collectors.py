@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import socket
 import time
 from dataclasses import dataclass, field
@@ -52,6 +53,11 @@ SKIP_MOUNT_EXACT = frozenset(
 HOST_ROOT = Path("/host")
 SKIP_NET_PREFIXES = ("veth", "br-")
 PHYSICAL_NET_PREFIXES = ("en", "eth", "wlp", "wlan", "wwan", "docker")
+TOP_CONSUMERS_MAX = 20
+_CONTAINER_ID_RE = re.compile(
+    r"(?:docker[-/]|cri-containerd-|crio-|libpod-)([0-9a-f]{64})"
+)
+_CONTAINER_ID_FALLBACK_RE = re.compile(r"/([0-9a-f]{64})(?:\.scope)?(?:/|$)")
 
 
 @dataclass
@@ -103,6 +109,15 @@ class SystemMetrics:
 
 
 @dataclass
+class ResourceConsumer:
+    name: str
+    kind: str  # container | process
+    cpu_percent: float
+    memory_mb: float
+    memory_percent: float
+
+
+@dataclass
 class Metrics:
     cpu: CpuMetrics
     memory: MemoryMetrics
@@ -111,6 +126,8 @@ class Metrics:
     network: list[NetworkInterface] = field(default_factory=list)
     system: SystemMetrics | None = None
     network_interval_label: str | None = None
+    top_cpu: list[ResourceConsumer] = field(default_factory=list)
+    top_memory: list[ResourceConsumer] = field(default_factory=list)
 
 
 def _bytes_to_gb(value: int | float) -> float:
@@ -133,11 +150,17 @@ def _normalize_mountpoint(mountpoint: str) -> str:
     return mountpoint
 
 
-def collect_cpu() -> CpuMetrics:
-    psutil.cpu_percent(interval=1)
+def collect_cpu(processes: list[psutil.Process] | None = None) -> CpuMetrics:
+    if processes:
+        for proc in processes:
+            try:
+                proc.cpu_percent(interval=None)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    percent = psutil.cpu_percent(interval=1)
     load_1, load_5, load_15 = os.getloadavg()
     return CpuMetrics(
-        percent=round(psutil.cpu_percent(interval=None), 1),
+        percent=round(percent, 1),
         load_1=round(load_1, 2),
         load_5=round(load_5, 2),
         load_15=round(load_15, 2),
@@ -320,6 +343,133 @@ def collect_network(state_file: str) -> tuple[list[NetworkInterface], str | None
     return interfaces, interval_label
 
 
+def _process_label(proc: psutil.Process) -> str:
+    try:
+        cmdline = proc.cmdline()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        cmdline = []
+
+    if cmdline:
+        base = Path(cmdline[0]).name or proc.name()
+        if len(cmdline) > 1 and base in {"python", "python3", "java", "node", "ruby", "perl"}:
+            arg = cmdline[1]
+            if arg and not arg.startswith("-"):
+                return f"{base} {Path(arg).name}"[:40]
+        return base[:40]
+
+    try:
+        return proc.name()[:40]
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return "unknown"
+
+
+def _container_id(pid: int) -> str | None:
+    try:
+        text = Path(f"/proc/{pid}/cgroup").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _CONTAINER_ID_RE.search(text)
+    if match:
+        return match.group(1)
+    match = _CONTAINER_ID_FALLBACK_RE.search(text)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _container_names() -> dict[str, str]:
+    try:
+        import docker
+        from docker.errors import DockerException
+    except ImportError:
+        return {}
+
+    try:
+        client = docker.from_env()
+    except DockerException:
+        return {}
+
+    names: dict[str, str] = {}
+    try:
+        for container in client.containers.list():
+            names[container.id] = container.name.lstrip("/")
+    except DockerException:
+        return {}
+    finally:
+        try:
+            client.close()
+        except DockerException:
+            pass
+    return names
+
+
+def _prime_processes() -> list[psutil.Process]:
+    return list(psutil.process_iter())
+
+
+def collect_top_consumers(
+    processes: list[psutil.Process],
+    cores: int,
+    total_memory_bytes: int,
+    limit: int,
+) -> tuple[list[ResourceConsumer], list[ResourceConsumer]]:
+    if limit <= 0 or cores <= 0 or total_memory_bytes <= 0:
+        return [], []
+
+    names = _container_names()
+    grouped: dict[str, dict] = {}
+
+    for proc in processes:
+        try:
+            cpu_raw = proc.cpu_percent(interval=None)
+            rss = proc.memory_info().rss
+            pid = proc.pid
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+        container_id = _container_id(pid)
+        if container_id:
+            key = f"c:{container_id}"
+            kind = "container"
+            name = names.get(container_id, container_id[:12])
+        else:
+            key = f"p:{pid}"
+            kind = "process"
+            suffix = f" [{pid}]"
+            label = _process_label(proc)
+            name = f"{label[: 40 - len(suffix)]}{suffix}"
+
+        bucket = grouped.get(key)
+        if bucket is None:
+            grouped[key] = {
+                "name": name,
+                "kind": kind,
+                "cpu_raw": cpu_raw,
+                "rss": rss,
+            }
+        else:
+            bucket["cpu_raw"] += cpu_raw
+            bucket["rss"] += rss
+
+    consumers: list[ResourceConsumer] = []
+    for bucket in grouped.values():
+        consumers.append(
+            ResourceConsumer(
+                name=bucket["name"],
+                kind=bucket["kind"],
+                cpu_percent=round(bucket["cpu_raw"] / cores, 1),
+                memory_mb=round(bucket["rss"] / (1024**2), 1),
+                memory_percent=round(bucket["rss"] / total_memory_bytes * 100, 1),
+            )
+        )
+
+    top_cpu = [item for item in consumers if item.cpu_percent >= 0.1]
+    top_cpu.sort(key=lambda item: item.cpu_percent, reverse=True)
+    top_memory = [item for item in consumers if item.memory_mb >= 1]
+    top_memory.sort(key=lambda item: item.memory_mb, reverse=True)
+    return top_cpu[:limit], top_memory[:limit]
+
+
 def collect_system(hostname_override: str | None = None) -> SystemMetrics:
     from datetime import datetime, timezone
 
@@ -337,14 +487,31 @@ def collect_system(hostname_override: str | None = None) -> SystemMetrics:
 def collect_all(
     state_file: str,
     hostname_override: str | None = None,
+    top_consumers: int = 5,
 ) -> Metrics:
+    limit = max(0, min(top_consumers, TOP_CONSUMERS_MAX))
+    processes = _prime_processes() if limit else []
+    cpu = collect_cpu(processes or None)
+    memory = collect_memory()
+    top_cpu: list[ResourceConsumer] = []
+    top_memory: list[ResourceConsumer] = []
+    if limit:
+        top_cpu, top_memory = collect_top_consumers(
+            processes,
+            cores=cpu.cores,
+            total_memory_bytes=psutil.virtual_memory().total or 1,
+            limit=limit,
+        )
+
     network, interval_label = collect_network(state_file)
     return Metrics(
-        cpu=collect_cpu(),
-        memory=collect_memory(),
+        cpu=cpu,
+        memory=memory,
         swap=collect_swap(),
         disks=collect_disks(),
         network=network,
         system=collect_system(hostname_override),
         network_interval_label=interval_label,
+        top_cpu=top_cpu,
+        top_memory=top_memory,
     )

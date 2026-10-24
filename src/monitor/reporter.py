@@ -119,6 +119,60 @@ def _format_log_section(log_summary: LogScanSummary | None) -> list[str]:
     return lines
 
 
+def _format_memory_size(memory_mb: float) -> str:
+    if memory_mb >= 1024:
+        return f"{memory_mb / 1024:.1f} GB"
+    if memory_mb >= 10:
+        return f"{memory_mb:.0f} MB"
+    return f"{memory_mb:.1f} MB"
+
+
+def _consumer_label(consumer, any_containers: bool) -> str:
+    label = consumer.name
+    if consumer.kind == "process" and any_containers:
+        label = f"host:{consumer.name}"
+    return label[:32]
+
+
+def _format_consumer_lines(consumers: list, mode: str) -> list[str]:
+    any_containers = any(item.kind == "container" for item in consumers)
+    labels = [_consumer_label(item, any_containers) for item in consumers]
+    width = max(len(label) for label in labels)
+    lines: list[str] = []
+    for label, item in zip(labels, consumers):
+        padded = _esc(label).ljust(width)
+        if mode == "cpu":
+            detail = (
+                f"{_esc(item.cpu_percent)}% | {_esc(_format_memory_size(item.memory_mb))}"
+            )
+        else:
+            detail = (
+                f"{_esc(_format_memory_size(item.memory_mb))} "
+                f"({_esc(item.memory_percent)}%) | {_esc(item.cpu_percent)}% CPU"
+            )
+        lines.append(f"  <code>{padded}</code> {detail}")
+    return lines
+
+
+def extend_top_consumers(
+    lines: list[str],
+    metrics,
+    *,
+    cpu: bool,
+    memory: bool,
+) -> None:
+    blocks: list[list[str]] = []
+    if cpu and metrics.top_cpu:
+        blocks.append(["<b>Top CPU:</b>", *_format_consumer_lines(metrics.top_cpu, "cpu")])
+    if memory and metrics.top_memory:
+        blocks.append(
+            ["<b>Top RAM:</b>", *_format_consumer_lines(metrics.top_memory, "memory")]
+        )
+    for block in blocks:
+        lines.append("")
+        lines.extend(block)
+
+
 def _truncate_report(text: str, max_len: int = TELEGRAM_MAX_LENGTH) -> str:
     if len(text) <= max_len:
         return text
@@ -169,6 +223,7 @@ def format_report(
         f"({_esc(swap.percent)}%)"
     )
     lines.append(f"<b>Uptime:</b> {_esc(_format_uptime(system.uptime_seconds))}")
+    extend_top_consumers(lines, metrics, cpu=True, memory=True)
     lines.append("")
 
     lines.append("<b>Disk:</b>")

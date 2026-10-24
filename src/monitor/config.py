@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # Kept for compatibility; log scans no longer feed alert decisions.
     log_errors_trigger_alert: bool = False
     alert_cooldown_minutes: int = 120
+    top_consumers: int = 5
     log_report_attach_html: bool = True
     # Unused: HTML is attached only to full/daily reports.
     log_report_attach_on_alert: bool = False
