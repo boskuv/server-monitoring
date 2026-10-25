@@ -58,6 +58,8 @@ jobs:
         
         if [[ "$BRANCH_NAME" == prod-* ]]; then
           TAGS="${IMAGE_NAME}:${BRANCH_NAME},${IMAGE_NAME}:latest"
+        elif [[ "$BRANCH_NAME" == "main" ]]; then
+          TAGS="${IMAGE_NAME}:${CURRENT_DATE},${IMAGE_NAME}:${BRANCH_NAME}-${SHORT_SHA},${IMAGE_NAME}:latest"
         else
           TAGS="${IMAGE_NAME}:${CURRENT_DATE},${IMAGE_NAME}:${BRANCH_NAME}-${SHORT_SHA}"
         fi
