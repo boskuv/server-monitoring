@@ -29,6 +29,7 @@ def main() -> int:
     container_watch = collect_container_watch(
         enabled=settings.container_watch_enabled,
         state_path=settings.container_state_file,
+        ignore=settings.container_watch_ignore,
     )
     # No incidents: keep the snapshot current even when the report is skipped.
     # Incidents stay uncommitted until Telegram accepts the message.

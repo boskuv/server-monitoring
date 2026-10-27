@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -191,6 +193,45 @@ def _event_for_change(prev: dict, curr: dict) -> ContainerEvent | None:
     return None
 
 
+def _ignore_patterns(ignore: str | list[str]) -> list[re.Pattern[str]]:
+    if isinstance(ignore, str):
+        parts = ignore.split(",")
+    else:
+        parts = list(ignore)
+
+    compiled: list[re.Pattern[str]] = []
+    for part in parts:
+        pattern = part.strip()
+        if not pattern:
+            continue
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error:
+            print(
+                f"Container ignore pattern is not a valid regex, matching literally: {pattern}",
+                file=sys.stderr,
+            )
+            compiled.append(re.compile(re.escape(pattern)))
+    return compiled
+
+
+def _is_ignored(name: str, patterns: list[re.Pattern[str]]) -> bool:
+    return any(pattern.search(name) for pattern in patterns)
+
+
+def _without_ignored(
+    containers: dict[str, dict],
+    patterns: list[re.Pattern[str]],
+) -> dict[str, dict]:
+    if not patterns:
+        return containers
+    return {
+        container_id: record
+        for container_id, record in containers.items()
+        if not _is_ignored(str(record.get("name") or ""), patterns)
+    }
+
+
 def diff_containers(previous: dict[str, dict], current: dict[str, dict]) -> list[ContainerEvent]:
     events: list[ContainerEvent] = []
     current_names = {str(record.get("name") or "") for record in current.values()}
@@ -250,7 +291,11 @@ def _snapshot(client, self_id: str | None) -> dict[str, dict]:
     return snapshot
 
 
-def collect_container_watch(enabled: bool, state_path: str) -> ContainerWatch:
+def collect_container_watch(
+    enabled: bool,
+    state_path: str,
+    ignore: str | list[str] = "",
+) -> ContainerWatch:
     if not enabled:
         return ContainerWatch(status="disabled")
 
@@ -275,10 +320,15 @@ def collect_container_watch(enabled: bool, state_path: str) -> ContainerWatch:
             except Exception:
                 pass
 
+    patterns = _ignore_patterns(ignore)
+    current = _without_ignored(current, patterns)
     new_state = {"containers": current}
     previous = _load_state(state_path)
     if previous is None:
         return ContainerWatch(status="baseline", new_state=new_state)
 
-    events = diff_containers(previous.get("containers") or {}, current)
+    events = diff_containers(
+        _without_ignored(previous.get("containers") or {}, patterns),
+        current,
+    )
     return ContainerWatch(status="ok", events=events, new_state=new_state)

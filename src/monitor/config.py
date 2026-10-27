@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     top_consumers: int = 5
     container_watch_enabled: bool = True
     container_state_file: str = "/data/container_state.json"
+    # Comma-separated regexes matched against container names. Empty = watch all.
+    container_watch_ignore: str = ""
     log_report_attach_html: bool = True
     # Unused: HTML is attached only to full/daily reports.
     log_report_attach_on_alert: bool = False

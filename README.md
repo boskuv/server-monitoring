@@ -64,6 +64,7 @@ docker compose --profile monitor run --rm monitor
 | `TOP_CONSUMERS` | no | `5` | Top containers/processes by CPU and RAM in reports and CPU/RAM alerts (`0` = off) |
 | `CONTAINER_WATCH_ENABLED` | no | `true` | Report container restarts, stops, and crashes |
 | `CONTAINER_STATE_FILE` | no | `/data/container_state.json` | Previous container snapshot |
+| `CONTAINER_WATCH_IGNORE` | no | empty | Comma-separated regexes of container names to skip |
 | `LOG_REPORT_ATTACH_HTML` | no | `true` | Attach full log error details as HTML on daily/full reports |
 | `LOG_REPORT_ATTACH_ON_ALERT` | no | `false` | Unused (HTML is never attached to alerts) |
 
@@ -134,6 +135,14 @@ Enabled by default (`CONTAINER_WATCH_ENABLED=true`). Each run inspects container
 | Running container disappeared and nothing with the same name replaced it | `removed` |
 
 A recreate with the same name (a normal deploy) is not an alert. The one-shot monitor container itself is ignored. Incidents are included in the full report and, in `scheduled_or_alert` mode, also sent as their own alert. The snapshot advances only after that message is sent, so a failed send is retried next run. Set `CONTAINER_WATCH_ENABLED=false` to turn this off.
+
+Skip containers by name with `CONTAINER_WATCH_IGNORE`. Each entry is a regex searched against the container name, separated by commas:
+
+```env
+CONTAINER_WATCH_IGNORE=portainer,watchtower,.*-exporter
+```
+
+`portainer` skips any name containing that text. `^watchtower$` skips only the exact name. Ignored containers are left out of the snapshot, so adding one to the list does not produce a `removed` alert. An invalid regex is matched as plain text.
 
 ## Docker log monitoring
 
